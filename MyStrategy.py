@@ -132,17 +132,16 @@ class MyStrategy:
                 self.ataker_target = Vector3D(ball_to_center_point.x, ball_to_center_point.z, 1)
 
                 delta_pos = ball_to_center_point - me
-                need_speed = delta_pos.len() / self.tik * tiks_pass
+                need_speed = ROBOT_MAX_GROUND_SPEED #delta_pos.len() / self.tik * tiks_pass
 
-                if  need_speed < ROBOT_MAX_GROUND_SPEED and \
-                    need_speed > 0.7 * ROBOT_MAX_GROUND_SPEED:
-                    target_velocity = delta_pos.normalize() * need_speed
-                    action.target_velocity_x = target_velocity.x
-                    action.target_velocity_y = 0.0
-                    action.target_velocity_z = target_velocity.z
-                    action.jump_speed = ROBOT_MAX_JUMP_SPEED if jump else 0.0
-                    action.use_nitro = False
-                    return
+
+                target_velocity = delta_pos.normalize() * need_speed
+                action.target_velocity_x = target_velocity.x
+                action.target_velocity_y = 0.0
+                action.target_velocity_z = target_velocity.z
+                action.jump_speed = ROBOT_MAX_JUMP_SPEED if jump else 0.0
+                action.use_nitro = False
+                return
         else:  # Run to take place between our gate and ball
             tiks_pass = 0
             for point in self.last_prediction:
@@ -175,15 +174,6 @@ class MyStrategy:
         return
 
     def act_defender(self, me: Robot, rules: Rules, game: Game, action: Action):
-        dist_to_ball = ((me.x - game.ball.x) ** 2
-                        + (me.y - game.ball.y) ** 2
-                        + (me.z - game.ball.z) ** 2
-                        ) ** 0.5
-
-        # If ball between robot and enemy's gates and robot hit the bal after jump then jump to hit the ball.
-        jump = (dist_to_ball < BALL_RADIUS +
-                ROBOT_MAX_RADIUS*4 and me.z < game.ball.z)
-
         gate_center = rules.arena.width / 2.0
         gate_z_target = rules.arena.depth + game.ball.radius * 2
 
@@ -192,25 +182,32 @@ class MyStrategy:
 
         gate_center_direction = Vector2D(gate_center - ball_curr_x, gate_z_target - ball_curr_z).normalize()
         tiks_pass = 0
-        for point in self.last_prediction:
+
+        for point in self.last_prediction[:10]:
             tiks_pass += 1
-            if point.z < 10:
+            if point.z < -20:
                 ball_to_center_point = Vector2D(point.x - gate_center_direction.x * (game.ball.radius + me.radius),
                                                 point.z - gate_center_direction.z * (game.ball.radius + me.radius))
-                self.ataker_target = Vector3D(ball_to_center_point.x, ball_to_center_point.z, 1)
 
                 delta_pos = ball_to_center_point - me
-                need_speed = delta_pos.len() / self.tik * tiks_pass
+                need_speed = ROBOT_MAX_GROUND_SPEED
 
-                if need_speed < ROBOT_MAX_GROUND_SPEED and \
-                        need_speed > 0.7 * ROBOT_MAX_GROUND_SPEED:
-                    target_velocity = delta_pos.normalize() * need_speed
-                    action.target_velocity_x = target_velocity.x
-                    action.target_velocity_y = 0.0
-                    action.target_velocity_z = target_velocity.z
-                    action.jump_speed = ROBOT_MAX_JUMP_SPEED if jump else 0.0
-                    action.use_nitro = False
-                    return
+                dist_to_ball = ((me.x - point.x) ** 2
+                                + (me.y - point.y) ** 2
+                                + (me.z - point.z) ** 2
+                                ) ** 0.5
+
+                # If ball between robot and enemy's gates and robot hit the bal after jump then jump to hit the ball.
+                jump = (dist_to_ball < BALL_RADIUS +
+                        ROBOT_MAX_RADIUS * 2 and me.z < game.ball.z)
+
+                target_velocity = delta_pos.normalize() * need_speed
+                action.target_velocity_x = target_velocity.x
+                action.target_velocity_y = 0.0
+                action.target_velocity_z = target_velocity.z
+                action.jump_speed = ROBOT_MAX_JUMP_SPEED if jump else 0.0
+                action.use_nitro = False
+                return
 
         target_pos = Vector2D(
             0.0, -(rules.arena.depth / 2.0) + rules.arena.bottom_radius)
