@@ -184,25 +184,41 @@ class MyStrategy:
         jump = (dist_to_ball < BALL_RADIUS +
                 ROBOT_MAX_RADIUS*4 and me.z < game.ball.z)
 
+        gate_center = rules.arena.width / 2.0
+        gate_z_target = rules.arena.depth + game.ball.radius * 2
+
+        ball_curr_x = game.ball.x
+        ball_curr_z = game.ball.z
+
+        gate_center_direction = Vector2D(gate_center - ball_curr_x, gate_z_target - ball_curr_z).normalize()
+        tiks_pass = 0
+        for point in self.last_prediction:
+            tiks_pass += 1
+            if point.z < 10:
+                ball_to_center_point = Vector2D(point.x - gate_center_direction.x * (game.ball.radius + me.radius),
+                                                point.z - gate_center_direction.z * (game.ball.radius + me.radius))
+                self.ataker_target = Vector3D(ball_to_center_point.x, ball_to_center_point.z, 1)
+
+                delta_pos = ball_to_center_point - me
+                need_speed = delta_pos.len() / self.tik * tiks_pass
+
+                if need_speed < ROBOT_MAX_GROUND_SPEED and \
+                        need_speed > 0.7 * ROBOT_MAX_GROUND_SPEED:
+                    target_velocity = delta_pos.normalize() * need_speed
+                    action.target_velocity_x = target_velocity.x
+                    action.target_velocity_y = 0.0
+                    action.target_velocity_z = target_velocity.z
+                    action.jump_speed = ROBOT_MAX_JUMP_SPEED if jump else 0.0
+                    action.use_nitro = False
+                    return
+
         target_pos = Vector2D(
             0.0, -(rules.arena.depth / 2.0) + rules.arena.bottom_radius)
-
-        if game.ball.velocity_z < -EPS:
-
-            t = (target_pos.z - game.ball.z) / game.ball.velocity_z
-            x = game.ball.x + game.ball.velocity_x * t
-
-            if abs(x) < rules.arena.goal_width / 2.0:
-                target_pos.x = x
-
         target_velocity = Vector2D(
             target_pos.x - me.x, target_pos.z - me.z) * ROBOT_MAX_GROUND_SPEED
-
         action.target_velocity_x = target_velocity.x
         action.target_velocity_y = 0.0
         action.target_velocity_z = target_velocity.z
-        action.jump_speed = ROBOT_MAX_JUMP_SPEED if jump else 0.0
-        action.use_nitro = False
 
     def predict_ball(self, sec: int = 1, tik: int = 60):
         ball_x = self.game.ball.x
