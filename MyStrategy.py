@@ -2,7 +2,6 @@ from model.action import Action
 from model.game import Game
 from model.robot import Robot
 from model.rules import Rules
-from model.arena import Arena
 
 EPS = 1e-5
 
@@ -34,6 +33,12 @@ class Vector2D:
     def __mul__(self, num: float):
         return Vector2D(self.x * num, self.z * num)
 
+    def __truediv__(self, num: float):
+        return Vector2D(self.x / num, self.z / num)
+
+    def __str__(self):
+        return '({0}, {1})'.format(self.x, self.z)
+
     def normalize(self):
         return Vector2D(self.x/self.len(), self.z/self.len())
 
@@ -60,11 +65,17 @@ class Vector3D:
     def __truediv__(self, num: float):
         return Vector3D(self.x / num, self.z / num, self.y / num)
 
+    def __str__(self):
+        return '({0}, {1}, {2})'.format(self.x, self.z, self.y)
+
     def dot(self, other):
         return abs(self.x * other.x + self.z * other.z + self.y * other.y)
 
     def normalize(self):
         return Vector3D(self.x/self.len(), self.z/self.len(), self.y/self.len())
+
+    def D2(self):
+        return Vector2D(self.x, self.z)
 
 
 class MyStrategy:
@@ -73,6 +84,8 @@ class MyStrategy:
     rules: Rules
 
     attacker: Robot
+    defender: Robot
+
     should_hit = False
     ataker_target = Vector3D(0, 0, 0)
     last_prediction = []
@@ -99,54 +112,83 @@ class MyStrategy:
 
 
     def act_attacker(self, me: Robot, rules: Rules, game: Game, action: Action):
-        #print('x: {0} z: {1} vel_x:{2} vel_z: {3}'.format(me.x, me.z, me.velocity_x, me.velocity_z))
         self.attacker = me
-        dist_to_ball = ((me.x - game.ball.x) ** 2
-                        + (me.y - game.ball.y) ** 2
-                        + (me.z - game.ball.z) ** 2
-                        ) ** 0.5
-
-        # If ball between robot and enemy's gates and robot hit the bal after jump then jump to hit the ball.
-        jump = (dist_to_ball <= BALL_RADIUS +
-                ROBOT_MAX_RADIUS * 4 and me.z < game.ball.z)
-
         gate_center = rules.arena.width / 2.0
         gate_z_target = rules.arena.depth + game.ball.radius * 2
 
-        ball_curr_x = game.ball.x
-        ball_curr_z = game.ball.z
-
-        if ball_curr_z - self.game.ball.radius * 3 > me.z:
+        if game.ball.z - self.game.ball.radius * 3 > me.z:
             self.should_hit = True
-        elif ball_curr_z < me.z:
+        elif game.ball.z < me.z:
             self.should_hit = False
 
-
         if self.should_hit:
-            gate_center_direction = Vector2D(gate_center - ball_curr_x, gate_z_target - ball_curr_z).normalize()
-            tiks_pass = 0
-            for point in self.last_prediction:
-                tiks_pass += 1
-                ball_to_center_point = Vector2D(point.x - gate_center_direction.x * (game.ball.radius + me.radius),
-                                                point.z - gate_center_direction.z * (game.ball.radius + me.radius))
-                self.ataker_target = Vector3D(ball_to_center_point.x, ball_to_center_point.z, 1)
 
-                delta_pos = ball_to_center_point - me
-                need_speed = ROBOT_MAX_GROUND_SPEED #delta_pos.len() / self.tik * tiks_pass
+            if (Vector2D(game.ball.x, game.ball.z) - Vector2D(me.x, me.z)).len() < ROBOT_MAX_GROUND_SPEED * 0.75:
+                tiks_pass = 0
+                for point in self.last_prediction[:45]:
+                    gate_center_direction = Vector2D(gate_center - point.x, gate_z_target - point.z).normalize()
+                    ball_to_center_point = Vector3D(point.x - gate_center_direction.x * game.ball.radius,
+                                                    point.z - gate_center_direction.z * game.ball.radius,
+                                                    1)
+                    delta_pos = ball_to_center_point - me
+                    target_velocity = delta_pos.normalize() * ROBOT_MAX_GROUND_SPEED
 
+                    poses = self.predict_move(me, target_velocity, tiks=tiks_pass + 1)
+                    if (poses[tiks_pass].D2() - point.D2()).len() <= self.game.ball.radius + me.radius:
 
-                target_velocity = delta_pos.normalize() * need_speed
-                action.target_velocity_x = target_velocity.x
-                action.target_velocity_y = 0.0
-                action.target_velocity_z = target_velocity.z
-                action.jump_speed = ROBOT_MAX_JUMP_SPEED if jump else 0.0
-                action.use_nitro = False
-                return
+                        jump_predict = self.predict_jump(me, tiks=min(tiks_pass + 1, 10), target_vel=target_velocity)
+                        jump = False
+                        for i in range(0, min(tiks_pass + 1, 10)):
+                            jp = jump_predict[i]
+                            bp = self.last_prediction[i]
+                            dist_to_ball = (jp-bp).len()
+                            jump = (dist_to_ball <= BALL_RADIUS + ROBOT_MAX_RADIUS and jp.z < game.ball.z - game.ball.radius)
+                            if jump:
+                                break
+
+                        action.target_velocity_x = target_velocity.x
+                        action.target_velocity_y = 0.0
+                        action.target_velocity_z = target_velocity.z
+                        action.jump_speed = ROBOT_MAX_JUMP_SPEED if jump else 0.0
+                        action.use_nitro = False
+                        #print('predicted')
+                        return
+                    tiks_pass += 1
+
+            point = self.last_prediction[0]
+            gate_center_direction = Vector2D(gate_center - point.x, gate_z_target - point.z).normalize()
+            ball_to_center_point = Vector3D(point.x - gate_center_direction.x * game.ball.radius,
+                                            point.z - gate_center_direction.z * game.ball.radius,
+                                            1)
+            delta_pos = ball_to_center_point - me
+            target_velocity = delta_pos.normalize() * ROBOT_MAX_GROUND_SPEED
+            action.target_velocity_x = target_velocity.x
+            action.target_velocity_y = 0.0
+            action.target_velocity_z = target_velocity.z
+
+            jump_predict = self.predict_jump(me)
+            jump = False
+            for i in range(1, 15):
+                jp = jump_predict[i]
+                bp = self.last_prediction[i]
+                dist_to_ball = ((jp.x - bp.x) ** 2
+                                + (jp.y - bp.y) ** 2
+                                + (jp.z - bp.z) ** 2
+                                ) ** 0.5
+                jump = (dist_to_ball <= BALL_RADIUS + ROBOT_MAX_RADIUS and jp.z < game.ball.z - game.ball.radius)
+                if jump:
+                    break
+
+            action.jump_speed = ROBOT_MAX_JUMP_SPEED if jump else 0.0
+            action.use_nitro = False
+            #print('blind')
+            return
+
         else:  # Run to take place between our gate and ball
             tiks_pass = 0
             for point in self.last_prediction:
                 tiks_pass += 1
-                if point.y > self.game.ball.radius * 4:
+                if point.y > self.game.ball.radius * 5:
                     continue
 
                 target_x = point.x
@@ -155,13 +197,24 @@ class MyStrategy:
                 #else:
                 #    target_x -= game.ball.radius * 2
 
+                jump_predict = self.predict_jump(me)
+                jump = False
+                for i in range(1, 15):
+                    jp = jump_predict[i]
+                    bp = self.last_prediction[i]
+                    dist_to_ball = ((jp.x - bp.x) ** 2
+                                    + (jp.y - bp.y) ** 2
+                                    + (jp.z - bp.z) ** 2
+                                    ) ** 0.5
+                    jump = (dist_to_ball <= BALL_RADIUS + ROBOT_MAX_RADIUS and jp.z < game.ball.z - game.ball.radius)
+                    if jump:
+                        break
+
                 target_z = point.z - game.ball.radius * 3
 
                 target = Vector3D(target_x, target_z, 1)
 
-
                 delta_pos = target-Vector3D(me.x, me.z, me.y)
-                delta_len = delta_pos.len()
                 need_speed = ROBOT_MAX_GROUND_SPEED
                 target_velocity = delta_pos.normalize() * need_speed
 
@@ -174,6 +227,7 @@ class MyStrategy:
         return
 
     def act_defender(self, me: Robot, rules: Rules, game: Game, action: Action):
+        self.defender = me
         gate_center = rules.arena.width / 2.0
         gate_z_target = rules.arena.depth + game.ball.radius * 2
 
@@ -183,41 +237,48 @@ class MyStrategy:
         gate_center_direction = Vector2D(gate_center - ball_curr_x, gate_z_target - ball_curr_z).normalize()
         tiks_pass = 0
 
-        for point in self.last_prediction[:10]:
-            tiks_pass += 1
-            if point.z < -20:
-                ball_to_center_point = Vector2D(point.x - gate_center_direction.x * (game.ball.radius + me.radius),
-                                                point.z - gate_center_direction.z * (game.ball.radius + me.radius))
+        for point in self.last_prediction[:40]:
+            if point.z < -20 and me.z < point.z:
+                ball_to_center_point = Vector3D(point.x - gate_center_direction.x * game.ball.radius,
+                                                point.z - gate_center_direction.z * game.ball.radius,
+                                                point.y)
 
                 delta_pos = ball_to_center_point - me
                 need_speed = ROBOT_MAX_GROUND_SPEED
-
-                dist_to_ball = ((me.x - point.x) ** 2
-                                + (me.y - point.y) ** 2
-                                + (me.z - point.z) ** 2
-                                ) ** 0.5
-
-                # If ball between robot and enemy's gates and robot hit the bal after jump then jump to hit the ball.
-                jump = (dist_to_ball < BALL_RADIUS +
-                        ROBOT_MAX_RADIUS * 2 and me.z < game.ball.z)
-
                 target_velocity = delta_pos.normalize() * need_speed
-                action.target_velocity_x = target_velocity.x
-                action.target_velocity_y = 0.0
-                action.target_velocity_z = target_velocity.z
-                action.jump_speed = ROBOT_MAX_JUMP_SPEED if jump else 0.0
-                action.use_nitro = False
-                return
+                poses = self.predict_move(me, target_velocity, tiks=tiks_pass+1)
+                if (poses[tiks_pass] - point).len() <= self.game.ball.radius + me.radius:
+
+                    jump_predict = self.predict_jump(me, tiks=min(tiks_pass+1, 15), target_vel=target_velocity)
+                    jump = False
+                    for i in range(0, min(tiks_pass+1, 15)):
+                        jp = jump_predict[i]
+                        bp = self.last_prediction[i]
+                        dist_to_ball = ((jp.x - bp.x) ** 2
+                                        + (jp.y - bp.y) ** 2
+                                        + (jp.z - bp.z) ** 2
+                                        ) ** 0.5
+                        jump = (dist_to_ball <= BALL_RADIUS + ROBOT_MAX_RADIUS and jp.z < game.ball.z - game.ball.radius)
+                        if jump:
+                            break
+
+                    action.target_velocity_x = target_velocity.x
+                    action.target_velocity_y = 0.0
+                    action.target_velocity_z = target_velocity.z
+                    action.jump_speed = ROBOT_MAX_JUMP_SPEED if jump else 0.0
+                    action.use_nitro = False
+                    return
+                tiks_pass += 1
 
         target_pos = Vector2D(
-            0.0, -(rules.arena.depth / 2.0) + rules.arena.bottom_radius)
+            0.0, -(rules.arena.depth / 2.0))
         target_velocity = Vector2D(
             target_pos.x - me.x, target_pos.z - me.z) * ROBOT_MAX_GROUND_SPEED
         action.target_velocity_x = target_velocity.x
         action.target_velocity_y = 0.0
         action.target_velocity_z = target_velocity.z
 
-    def predict_ball(self, sec: int = 1, tik: int = 60):
+    def predict_ball(self, sec: int = 1, tik: int = 60, tiks: int = 0):
         ball_x = self.game.ball.x
         ball_z = self.game.ball.z
         ball_y = self.game.ball.y
@@ -227,11 +288,12 @@ class MyStrategy:
         ball_rad = self.game.ball.radius
 
         distances = Helpers()
-        ball_positions = []
-        for i in range(1, sec*tik):
+        ball_positions = [Vector3D(ball_x, ball_z, ball_y)]
+        num = tiks+1 if tiks > 0 else sec*tik
+        for i in range(1, num):
 
             if ball_y - ball_rad >= 0 and ball_y + ball_rad < self.rules.arena.height:
-                ball_vel_y = ball_vel_y - GRAVITY / 60.0
+                ball_vel_y = ball_vel_y - GRAVITY / float(tik)
             elif abs(ball_vel_y) > EPS:
                 ball_vel_y = -ball_vel_y * 0.7
 
@@ -251,21 +313,54 @@ class MyStrategy:
             ball_positions.append(Vector3D(ball_x, ball_z, ball_y))
         return ball_positions
 
+    def predict_jump(self, me: Robot, sec: int = 1, tik: int = 60, tiks: int = 0, target_vel:Vector3D = None):
+        pos = Vector3D(me.x, me.z, me.y)
+        vel = target_vel if target_vel else Vector3D(me.velocity_x, me.velocity_z, ROBOT_MAX_JUMP_SPEED)
+        jump_pos = [pos]
+
+        num = tiks+1 if tiks > 0 else sec*tik
+        for i in range(1, num):
+            pos += vel / float(tik)
+            if pos.y > ROBOT_MAX_RADIUS:
+                vel.y -= GRAVITY / float(tik)
+            jump_pos.append(pos)
+        return jump_pos
+
+    def predict_move(self, me: Robot, target_vel: Vector3D, sec: int = 1, tik: int = 60, tiks: int = 0):
+        pos = Vector3D(me.x, me.z, me.y)
+        vel = Vector3D(me.velocity_x, me.velocity_z, me.velocity_y)
+        poses = []
+        num = tiks+1 if tiks > 0 else sec*tik
+        for i in range(1, num):
+            target_vel_change = target_vel - vel
+            if target_vel_change.len() > 0:
+                accel = 100
+                vel += target_vel_change.normalize() * accel / float(tik)
+            if vel.len() > ROBOT_MAX_GROUND_SPEED:
+                vel = vel.normalize() * ROBOT_MAX_GROUND_SPEED
+            pos += vel / float(tik)
+            poses.append(pos)
+        return poses
+
     def custom_rendering(self):
-        predictions = self.predict_ball(2, 60)
+        predictions = self.predict_ball(1, 60)
+        ajumps = self.predict_jump(self.attacker)
+        djumps = self.predict_jump(self.defender)
 
         spheres_str = []
-        for point in predictions:
+        for point in predictions[:20]:
             sphere = '{{"Sphere":{{"x": {0}, "y": {1}, "z": {2}, "radius": {3}, "r": 1.0, "g": 1.0, "b": 1.0, "a": 0.5}}}}'.format(point.x, point.y, point.z, self.game.ball.radius)
             spheres_str.append(sphere)
 
-            ataker_pos = Vector3D(self.attacker.x, self.attacker.z, self.attacker.y)
-        result = "[" + ','.join(spheres_str) + \
-                 ', {{ "Line": {{"x1": {0}, "z1": {1}, "y1": {2}, ' \
-                 '"x2": {3}, "z2": {4}, "y2": {5},' \
-                 '"width": 1.0, "r":1.0, "g":1.0, "b":1.0, "a":1.0 }} ' \
-                 '}}'.format(ataker_pos.x, ataker_pos.z, ataker_pos.y,
-                             self.ataker_target.x, self.ataker_target.z, self.ataker_target.y) + "]"
+        for j in ajumps[:15]:
+            sphere = '{{"Sphere":{{"x": {0}, "y": {1}, "z": {2}, "radius": {3}, "r": 1.0, "g": 0.0, "b": 0.0, "a": 0.5}}}}'.format(j.x, j.y, j.z, ROBOT_MAX_RADIUS)
+            spheres_str.append(sphere)
+
+        for j in djumps[:15]:
+            sphere = '{{"Sphere":{{"x": {0}, "y": {1}, "z": {2}, "radius": {3}, "r": 0.0, "g": 0.0, "b": 1.0, "a": 0.5}}}}'.format(j.x, j.y, j.z, ROBOT_MAX_RADIUS)
+            spheres_str.append(sphere)
+
+        result = "[" + ','.join(spheres_str) + "]"
         return result
 
 
@@ -283,22 +378,3 @@ class Helpers:
         arccosInput = -1.0 if arccosInput < -1.0 else arccosInput
         return math.acos(arccosInput)
 
-
-'''
-    def attacker_position_rate(self):
-        ball_gate_side = self.game.ball.z - self.attacker.z
-        ball_gate_side_rate = 0 if ball_gate_side > 0 else ball_gate_side
-
-        x_distance_rate = - abs(self.game.ball.x - self.attacker.x)
-        z_distance_rate = - abs(ball_gate_side)
-
-        gate_center = self.rules.arena.width / 2.0
-        gate_z_target = self.rules.arena.depth + self.game.ball.radius * 2
-
-        gate_center_direction = Vector3D(gate_center - self.game.ball.x, gate_z_target - self.game.ball.z, 0).normalize()
-        attacker_velocity = Vector3D(self.attacker.velocity_x, self.attacker.velocity_z, 0).normalize()
-        velocity_angle_rate = 360 - self.angle_vecters(gate_center_direction, attacker_velocity)
-        attacker_velocity_len = attacker_velocity.len()
-
-        return 10 * ball_gate_side_rate + x_distance_rate + z_distance_rate #+ velocity_angle_rate
-'''
